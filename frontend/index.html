@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interface de traduction</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <div class="container">
+        <!-- En-tête -->
+        <header class="header">
+            <div class="brand">Paddle traducteur</div>
+        </header>
+
+       
+
+        <!-- Carte principale -->
+        <section class="card">
+            <div class="grid">
+                <!-- Panneau source -->
+                <div class="panel">
+                <div class="toolbar">
+                    <button class="lang-btn active" data-from="fr" data-to="en">fr → en</button>
+                    <button class="lang-btn" data-from="en" data-to="fr">en → fr</button>
+                    <span class="muted">Saisissez du texte à traduire</span>
+                </div>
+
+                    <div class="area">
+                        <textarea id="source" placeholder="Écrivez ou collez votre texte ici…"></textarea>
+                    </div>
+                    <div class="actions">
+                        <div class="right-actions">
+                            <button class="btn primary" onclick="traduire()">Traduire</button>
+
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Panneau sortie -->
+                <div class="panel">
+                    <div class="toolbar">
+                        <span class="muted">Traduction</span>
+                    </div>
+                    <div class="area">
+                        <div class="output" aria-live="polite">La traduction apparaîtra ici.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <p class="footer">
+  - <a href="https://github.com/" target="_blank">GitHub</a>
+</p>
+    </div>
+
+    <!-- Script de traduction -->
+    <script src="translate.js"></script>
+</body>
+</html>
