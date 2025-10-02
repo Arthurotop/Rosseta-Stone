@@ -1,2 +1,5 @@
 rosette/Lib/site-packages/torch/lib/*.lib filter=lfs diff=lfs merge=lfs -text
 rosette/Lib/site-packages/torch/lib/*.dll filter=lfs diff=lfs merge=lfs -text
+backend/data/* filter=lfs diff=lfs merge=lfs -text
+backend/data/preprocessed_data/processed_data.pt filter=lfs diff=lfs merge=lfs -text
+backend/data/reporting/model/*.pth filter=lfs diff=lfs merge=lfs -text
