@@ -6,9 +6,11 @@ let toLang = "en";
 async function traduire() {
   const texte = document.getElementById("source").value;
   const output = document.querySelector(".output");
+  const modelInfo = document.getElementById("modelSource"); // <- zone ajoutée dans ton HTML
 
   if (!texte.trim()) {
-    output.textContent = ""; // vide la sortie si rien n'est écrit
+    output.textContent = ""; 
+    modelInfo.textContent = "";
     return;
   }
 
@@ -27,14 +29,26 @@ async function traduire() {
       const errText = await res.text();
       console.error("Erreur API:", errText);
       output.textContent = "Erreur lors de la traduction";
+      modelInfo.textContent = "";
       return;
     }
 
     const data = await res.json();
     output.textContent = data.translation_text || "";
+
+    // Affiche la source du modèle
+    if (data.model_source) {
+      modelInfo.textContent = 
+        data.model_source === "local"
+          ? "Traduit avec le modèle local"
+          : "Traduit via API Hugging Face";
+    } else {
+      modelInfo.textContent = "";
+    }
   } catch (err) {
     console.error(err);
     output.textContent = "Erreur réseau ou API";
+    modelInfo.textContent = "";
   }
 }
 

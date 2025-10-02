@@ -19,7 +19,6 @@ CORS(app, origins=["http://127.0.0.1:5500"])
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-
 # ==============================
 # Chargement données & modèle
 # ==============================
@@ -30,43 +29,50 @@ fr_word2id = data["fr_word2id"]
 en_id2word = data["en_id2word"]
 fr_id2word = data["fr_id2word"]
 
-INPUT_DIM = len(en_word2id)
-OUTPUT_DIM = len(fr_word2id)
+DIM_EN = len(en_word2id)
+DIM_FR = len(fr_word2id)
 
-df = pd.read_csv("backend/data/reporting/gridsearch_res/gridsearch_results.csv")
-model_parameters = df[df["model_name"] == "seq2seq_lstm_v28.pth"]
+df = pd.read_csv("backend/data/reporting/gridsearch_res/gridsearch_en-fr_train.csv")
+model_parameters = df[df["model_name"] == "seq2seq_en-fr_v8.pth"]
 
 EMB_SIZE = int(model_parameters["EMB_SIZE"])
 HID_SIZE = int(model_parameters["HID_SIZE"])
 
-encoder = Encoder(INPUT_DIM, EMB_SIZE, HID_SIZE).to(DEVICE)
-decoder = Decoder(OUTPUT_DIM, EMB_SIZE, HID_SIZE * 2, HID_SIZE).to(DEVICE)
-model = Seq2Seq(encoder, decoder).to(DEVICE)
-
-model.load_state_dict(
-    torch.load("backend/data/reporting/model/seq2seq_lstm_v28.pth", map_location=DEVICE)
+# Modèles EN→FR
+encoder_en = Encoder(DIM_EN, EMB_SIZE, HID_SIZE).to(DEVICE)
+decoder_en = Decoder(DIM_FR, EMB_SIZE, HID_SIZE * 2, HID_SIZE).to(DEVICE)
+model_en_fr = Seq2Seq(encoder_en, decoder_en).to(DEVICE)
+model_en_fr.load_state_dict(
+    torch.load("backend/data/reporting/model/seq2seq_en-fr_v8.pth", map_location=DEVICE)
 )
-model.eval()
+model_en_fr.eval()
 
-logger.info("✅ Modèle local chargé avec succès")
+# Modèles FR→EN
+encoder_fr = Encoder(DIM_FR, EMB_SIZE, HID_SIZE).to(DEVICE)
+decoder_fr = Decoder(DIM_EN, EMB_SIZE, HID_SIZE * 2, HID_SIZE).to(DEVICE)
+model_fr_en = Seq2Seq(encoder_fr, decoder_fr).to(DEVICE)
+model_fr_en.load_state_dict(
+    torch.load("backend/data/reporting/model/seq2seq_fr-en_v8.pth", map_location=DEVICE)
+)
+model_fr_en.eval()
 
+logger.info("Modèles locaux chargés avec succès")
 
 # ==============================
 # Hugging Face Client
 # ==============================
 HF_TOKEN = os.getenv("HF_TOKEN")  # ⚠️ Définir via export HF_TOKEN="xxx"
 if not HF_TOKEN:
-    logger.warning("⚠️ Aucun token Hugging Face trouvé dans les variables d'environnement")
+    logger.warning("Aucun token Hugging Face trouvé dans les variables d'environnement")
 
 client = InferenceClient("Helsinki-NLP/opus-mt-en-fr", token=HF_TOKEN)
-
 
 # ==============================
 # API Endpoint
 # ==============================
 @app.route("/translate", methods=["POST"])
 def translate():
-    """Traduit une phrase EN → FR avec modèle local ou Hugging Face API."""
+    """Traduit une phrase EN ↔ FR avec modèle local ou Hugging Face API."""
     data_req = request.get_json()
 
     if not data_req:
@@ -79,31 +85,57 @@ def translate():
     from_lang = data_req.get("from")
     to_lang = data_req.get("to")
 
-    # ==============================
-    # Traduction
-    # ==============================
     try:
+        translation = None
+        source = None  
+
+        # -----------------------------
+        # EN → FR
+        # -----------------------------
         if from_lang == "en" and to_lang == "fr":
             if use_api_(sentence, en_word2id):
-                # Hugging Face API
                 if not HF_TOKEN:
-                    return jsonify({"error": "API Hugging Face indisponible (token manquant)"}), 503
-
+                    return jsonify({
+                        "error": "API Hugging Face indisponible (token manquant)"
+                    }), 503
                 response = client.post(json={"inputs": sentence})
-                data = json.loads(response)
-                translation = data[0]["translation_text"]
+                data_hf = json.loads(response)
+                translation = data_hf[0]["translation_text"]
+                source = "huggingface"
             else:
-                # Modèle local
                 translation = translate_sentence(
-                    sentence, model, en_word2id, fr_word2id, fr_id2word, device=DEVICE
+                    sentence, model_en_fr, en_word2id, fr_word2id, fr_id2word, device=DEVICE
                 )
-        else:
-            # Fallback : toujours modèle local
-            translation = translate_sentence(
-                sentence, model, en_word2id, fr_word2id, fr_id2word, device=DEVICE
-            )
+                source = "local"
 
-        return jsonify({"translation_text": translation})
+        # -----------------------------
+        # FR → EN
+        # -----------------------------
+        elif from_lang == "fr" and to_lang == "en":
+            if use_api_(sentence, fr_word2id):
+                if not HF_TOKEN:
+                    return jsonify({
+                        "error": "API Hugging Face indisponible (token manquant)"
+                    }), 503
+                # Utiliser modèle Hugging Face FR→EN
+                client_fr_en = InferenceClient("Helsinki-NLP/opus-mt-fr-en", token=HF_TOKEN)
+                response = client_fr_en.post(json={"inputs": sentence})
+                data_hf = json.loads(response)
+                translation = data_hf[0]["translation_text"]
+                source = "huggingface"
+            else:
+                translation = translate_sentence(
+                    sentence, model_fr_en, fr_word2id, en_word2id, en_id2word, device=DEVICE
+                )
+                source = "local"
+
+        else:
+            return jsonify({"error": "Paires de langues non supportées"}), 400
+
+        return jsonify({
+            "translation_text": translation,
+            "model_source": source
+        })
 
     except Exception as e:
         logger.error(f"Erreur pendant la traduction: {e}")
@@ -114,4 +146,5 @@ def translate():
 # Lancement serveur
 # ==============================
 if __name__ == "__main__":
+    # S’assure que app est bien défini avant exécution
     app.run(host="0.0.0.0", port=5000, debug=True)

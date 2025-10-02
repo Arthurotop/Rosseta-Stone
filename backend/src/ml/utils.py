@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from rouge_score import rouge_scorer
 import nltk
 
 # Télécharger les ressources nécessaires
@@ -47,6 +48,39 @@ def compute_bleu(output, target, id2word):
     return sum(bleu_scores) / len(bleu_scores) if bleu_scores else 0.0
 
 
+
+def compute_rouge(output, target, id2word):
+    """
+    Calcule le score ROUGE-L moyen d'un batch.
+
+    Args:
+        output (Tensor): [batch_size, seq_len, vocab_size]
+        target (Tensor): [batch_size, seq_len]
+        id2word (dict): mapping {id: mot}
+
+    Returns:
+        float: ROUGE-L F1 moyen du batch
+    """
+    preds = output.argmax(dim=-1).cpu().tolist()
+    refs = target.cpu().tolist()
+
+    scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
+    rouge_scores = []
+
+    for pred_seq, ref_seq in zip(preds, refs):
+        # Supprimer padding (0), <sos>=1 et <eos>=2
+        pred_tokens = [id2word[idx] for idx in pred_seq if idx not in [0, 1, 2]]
+        ref_tokens = [id2word[idx] for idx in ref_seq if idx not in [0, 1, 2]]
+
+        if pred_tokens and ref_tokens:
+            pred_sentence = " ".join(pred_tokens)
+            ref_sentence = " ".join(ref_tokens)
+            score = scorer.score(ref_sentence, pred_sentence)["rougeL"].fmeasure
+            rouge_scores.append(score)
+
+    return sum(rouge_scores) / len(rouge_scores) if rouge_scores else 0.0
+
+
 def compute_accuracy(output, target):
     """
     Calcule l'accuracy en ignorant le padding.
@@ -85,7 +119,7 @@ def run_epoch(model, loader, optimizer, criterion, teacher_forcing_ratio, id2wor
         tuple: (loss, accuracy, bleu) moyens sur l'époque
     """
     model.train() if training else model.eval()
-    total_loss, total_acc, total_bleu = 0, 0, 0
+    total_loss, total_acc, total_bleu, total_rouge = 0, 0, 0, 0
 
     for src, src_lens, tgt, tgt_lens in tqdm(loader, desc="Batch", leave=False):
         src, tgt, src_lens = src.to(DEVICE), tgt.to(DEVICE), src_lens.to(DEVICE)
@@ -109,12 +143,14 @@ def run_epoch(model, loader, optimizer, criterion, teacher_forcing_ratio, id2wor
         total_loss += loss.item()
         total_acc += compute_accuracy(output[:, 1:, :], tgt[:, 1:])
         total_bleu += compute_bleu(output[:, 1:, :], tgt[:, 1:], id2word)
+        total_rouge += compute_rouge(output[:, 1:, :], tgt[:, 1:], id2word)
 
     n_batches = len(loader)
     return (
         total_loss / n_batches,
         total_acc / n_batches,
         total_bleu / n_batches,
+        total_rouge / n_batches,
     )
 
 

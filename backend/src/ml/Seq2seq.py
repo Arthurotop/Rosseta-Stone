@@ -6,7 +6,7 @@ PAD_ID = 0
 
 
 class Encoder(nn.Module):
-    def __init__(self, vocab_size, emb_size, hid_size, n_layers=1, dropout=0.1):
+    def __init__(self, vocab_size, emb_size, hid_size, n_layers=1, dropout=0.0):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, emb_size, padding_idx=PAD_ID)
         self.lstm = nn.LSTM(emb_size, hid_size, n_layers,
@@ -46,7 +46,7 @@ class Attention(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, emb_size, enc_hid_size, dec_hid_size, n_layers=1, dropout=0.1):
+    def __init__(self, vocab_size, emb_size, enc_hid_size, dec_hid_size, n_layers=1, dropout=0.0):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, emb_size, padding_idx=PAD_ID)
         self.attention = Attention(dec_hid_size)
