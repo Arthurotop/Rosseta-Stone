@@ -2,7 +2,7 @@ import os
 import json
 import torch
 import pandas as pd
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from loguru import logger
 from huggingface_hub import InferenceClient
@@ -14,19 +14,29 @@ from ml.traduction import translate_sentence
 from ml.utils import use_api_
 
 # ==============================
-# Configuration Flask
+# Définir la racine du projet
 # ==============================
-app = Flask(__name__)
-CORS(app, origins=["http://127.0.0.1:5500"])
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
+# ==============================
+# Configuration Flask (frontend)
+# ==============================
+app = Flask(
+    __name__,
+    static_folder=FRONTEND_DIR,   # JS/CSS/images
+    template_folder=FRONTEND_DIR  # HTML
+)
+CORS(app, origins="*")  # Autorise toutes les origines
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ==============================
 # Télécharger modèles depuis Google Drive si manquants
 # ==============================
-MODEL_DIR = "backend/data/reporting/model"
+MODEL_DIR = os.path.join(BASE_DIR, "backend", "data", "reporting", "model")
 MODEL_ZIP_ID = "1xtCwYVjxkaKplQoWXCNjd84NL5ms8kHd"
-MODEL_ZIP_PATH = "models.zip"
+MODEL_ZIP_PATH = os.path.join(BASE_DIR, "models.zip")
 model_files = ["seq2seq_en-fr_v8.pth", "seq2seq_fr-en_v8.pth"]
 
 def download_file_from_google_drive(file_id, destination):
@@ -51,7 +61,7 @@ def save_response_content(response, destination):
             if chunk:
                 f.write(chunk)
 
-if not all(os.path.exists(f"{MODEL_DIR}/{mf}") for mf in model_files):
+if not all(os.path.exists(os.path.join(MODEL_DIR, mf)) for mf in model_files):
     os.makedirs(MODEL_DIR, exist_ok=True)
     logger.info("Téléchargement des modèles depuis Google Drive...")
     download_file_from_google_drive(MODEL_ZIP_ID, MODEL_ZIP_PATH)
@@ -63,7 +73,7 @@ if not all(os.path.exists(f"{MODEL_DIR}/{mf}") for mf in model_files):
 # ==============================
 # Chargement données & modèles
 # ==============================
-data = torch.load("./data/preprocessed_data/processed_data.pt")
+data = torch.load(os.path.join(BASE_DIR, "data", "preprocessed_data", "processed_data.pt"))
 
 en_word2id = data["en_word2id"]
 fr_word2id = data["fr_word2id"]
@@ -73,8 +83,8 @@ fr_id2word = data["fr_id2word"]
 DIM_EN = len(en_word2id)
 DIM_FR = len(fr_word2id)
 
-df = pd.read_csv("backend/data/reporting/gridsearch_res/gridsearch_en-fr_train.csv")
-model_parameters = df[df["model_name"] == "seq2seq_en-fr_v8.pth"]
+df = pd.read_csv(os.path.join(BASE_DIR, "backend", "data", "reporting", "gridsearch_res", "gridsearch_en-fr_train.csv"))
+model_parameters = df[df["model_name"] == "seq2seq_en-fr_v8.pth"].iloc[0]
 
 EMB_SIZE = int(model_parameters["EMB_SIZE"])
 HID_SIZE = int(model_parameters["HID_SIZE"])
@@ -83,18 +93,14 @@ HID_SIZE = int(model_parameters["HID_SIZE"])
 encoder_en = Encoder(DIM_EN, EMB_SIZE, HID_SIZE).to(DEVICE)
 decoder_en = Decoder(DIM_FR, EMB_SIZE, HID_SIZE * 2, HID_SIZE).to(DEVICE)
 model_en_fr = Seq2Seq(encoder_en, decoder_en).to(DEVICE)
-model_en_fr.load_state_dict(
-    torch.load(f"{MODEL_DIR}/seq2seq_en-fr_v8.pth", map_location=DEVICE)
-)
+model_en_fr.load_state_dict(torch.load(os.path.join(MODEL_DIR, "seq2seq_en-fr_v8.pth"), map_location=DEVICE))
 model_en_fr.eval()
 
 # Modèles FR→EN
 encoder_fr = Encoder(DIM_FR, EMB_SIZE, HID_SIZE).to(DEVICE)
 decoder_fr = Decoder(DIM_EN, EMB_SIZE, HID_SIZE * 2, HID_SIZE).to(DEVICE)
 model_fr_en = Seq2Seq(encoder_fr, decoder_fr).to(DEVICE)
-model_fr_en.load_state_dict(
-    torch.load(f"{MODEL_DIR}/seq2seq_fr-en_v8.pth", map_location=DEVICE)
-)
+model_fr_en.load_state_dict(torch.load(os.path.join(MODEL_DIR, "seq2seq_fr-en_v8.pth"), map_location=DEVICE))
 model_fr_en.eval()
 
 logger.info("Modèles locaux chargés avec succès")
@@ -106,11 +112,22 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
     logger.warning("Aucun token Hugging Face trouvé dans les variables d'environnement")
 
-client = InferenceClient("Helsinki-NLP/opus-mt-en-fr", token=HF_TOKEN)
+client_en_fr = InferenceClient("Helsinki-NLP/opus-mt-en-fr", token=HF_TOKEN)
+client_fr_en = InferenceClient("Helsinki-NLP/opus-mt-fr-en", token=HF_TOKEN)
 
 # ==============================
-# API Endpoint
+# Routes Flask
 # ==============================
+@app.route("/")
+def index():
+    """Renvoie l'index.html"""
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+@app.route("/<path:path>")
+def static_proxy(path):
+    """Renvoie tous les fichiers statiques dans frontend/"""
+    return send_from_directory(FRONTEND_DIR, path)
+
 @app.route("/translate", methods=["POST"])
 def translate():
     data_req = request.get_json()
@@ -126,21 +143,18 @@ def translate():
 
     try:
         translation = None
-        source = None  
+        source = None
 
         # EN → FR
         if from_lang == "en" and to_lang == "fr":
             if use_api_(sentence, en_word2id):
                 if not HF_TOKEN:
                     return jsonify({"error": "API Hugging Face indisponible (token manquant)"}), 503
-                response = client.post(json={"inputs": sentence})
-                data_hf = json.loads(response)
+                data_hf = json.loads(client_en_fr.post(json={"inputs": sentence}))
                 translation = data_hf[0]["translation_text"]
                 source = "huggingface"
             else:
-                translation = translate_sentence(
-                    sentence, model_en_fr, en_word2id, fr_word2id, fr_id2word, device=DEVICE
-                )
+                translation = translate_sentence(sentence, model_en_fr, en_word2id, fr_word2id, fr_id2word, device=DEVICE)
                 source = "local"
 
         # FR → EN
@@ -148,17 +162,12 @@ def translate():
             if use_api_(sentence, fr_word2id):
                 if not HF_TOKEN:
                     return jsonify({"error": "API Hugging Face indisponible (token manquant)"}), 503
-                client_fr_en = InferenceClient("Helsinki-NLP/opus-mt-fr-en", token=HF_TOKEN)
-                response = client_fr_en.post(json={"inputs": sentence})
-                data_hf = json.loads(response)
+                data_hf = json.loads(client_fr_en.post(json={"inputs": sentence}))
                 translation = data_hf[0]["translation_text"]
                 source = "huggingface"
             else:
-                translation = translate_sentence(
-                    sentence, model_fr_en, fr_word2id, en_word2id, en_id2word, device=DEVICE
-                )
+                translation = translate_sentence(sentence, model_fr_en, fr_word2id, en_word2id, en_id2word, device=DEVICE)
                 source = "local"
-
         else:
             return jsonify({"error": "Paires de langues non supportées"}), 400
 
@@ -173,4 +182,5 @@ def translate():
 # ==============================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    logger.info(f"Démarrage du serveur sur http://127.0.0.1:{port}")
     app.run(host="0.0.0.0", port=port, debug=False)

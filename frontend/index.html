@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Interface de traduction</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
     <div class="container">
@@ -27,11 +27,12 @@
                     <div class="area">
                         <textarea id="source" placeholder="Écrivez ou collez votre texte ici…"></textarea>
                     </div>
-                    <!-- <div class="actions">
+
+                    <div class="actions">
                         <div class="right-actions">
                             <button class="btn primary" onclick="traduire()">Traduire</button>
                         </div>
-                    </div> -->
+                    </div>
                 </div>
 
                 <!-- Panneau sortie -->
@@ -40,8 +41,7 @@
                         <span class="muted">Traduction</span>
                     </div>
                     <div class="area">
-                        <div class="output" aria-live="polite">La traduction apparaîtra ici.</div>
-                        <!-- Ici on affiche la source du modèle -->
+                        <div id="output" class="output" aria-live="polite">La traduction apparaîtra ici.</div>
                         <div id="modelSource" class="muted" style="margin-top:8px; font-size:0.9em;"></div>
                     </div>
                 </div>
@@ -54,6 +54,6 @@
     </div>
 
     <!-- Script de traduction -->
-    <script src="translate.js"></script>
+    <script src="/translate.js"></script>
 </body>
 </html>
