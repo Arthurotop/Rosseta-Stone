@@ -6,6 +6,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from loguru import logger
 from huggingface_hub import InferenceClient
+import requests
+import zipfile
 
 from ml.Seq2seq import Encoder, Decoder, Seq2Seq
 from ml.traduction import translate_sentence
@@ -20,7 +22,46 @@ CORS(app, origins=["http://127.0.0.1:5500"])
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ==============================
-# Chargement données & modèle
+# Télécharger modèles depuis Google Drive si manquants
+# ==============================
+MODEL_DIR = "backend/data/reporting/model"
+MODEL_ZIP_ID = "1xtCwYVjxkaKplQoWXCNjd84NL5ms8kHd"
+MODEL_ZIP_PATH = "models.zip"
+model_files = ["seq2seq_en-fr_v8.pth", "seq2seq_fr-en_v8.pth"]
+
+def download_file_from_google_drive(file_id, destination):
+    URL = "https://docs.google.com/uc?export=download"
+    session = requests.Session()
+    response = session.get(URL, params={'id': file_id}, stream=True)
+    token = get_confirm_token(response)
+    if token:
+        response = session.get(URL, params={'id': file_id, 'confirm': token}, stream=True)
+    save_response_content(response, destination)
+
+def get_confirm_token(response):
+    for key, value in response.cookies.items():
+        if key.startswith('download_warning'):
+            return value
+    return None
+
+def save_response_content(response, destination):
+    CHUNK_SIZE = 32768
+    with open(destination, "wb") as f:
+        for chunk in response.iter_content(CHUNK_SIZE):
+            if chunk:
+                f.write(chunk)
+
+if not all(os.path.exists(f"{MODEL_DIR}/{mf}") for mf in model_files):
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    logger.info("Téléchargement des modèles depuis Google Drive...")
+    download_file_from_google_drive(MODEL_ZIP_ID, MODEL_ZIP_PATH)
+    logger.info("Extraction du ZIP des modèles...")
+    with zipfile.ZipFile(MODEL_ZIP_PATH, "r") as zip_ref:
+        zip_ref.extractall(MODEL_DIR)
+    os.remove(MODEL_ZIP_PATH)
+
+# ==============================
+# Chargement données & modèles
 # ==============================
 data = torch.load("./data/preprocessed_data/processed_data.pt")
 
@@ -43,7 +84,7 @@ encoder_en = Encoder(DIM_EN, EMB_SIZE, HID_SIZE).to(DEVICE)
 decoder_en = Decoder(DIM_FR, EMB_SIZE, HID_SIZE * 2, HID_SIZE).to(DEVICE)
 model_en_fr = Seq2Seq(encoder_en, decoder_en).to(DEVICE)
 model_en_fr.load_state_dict(
-    torch.load("backend/data/reporting/model/seq2seq_en-fr_v8.pth", map_location=DEVICE)
+    torch.load(f"{MODEL_DIR}/seq2seq_en-fr_v8.pth", map_location=DEVICE)
 )
 model_en_fr.eval()
 
@@ -52,7 +93,7 @@ encoder_fr = Encoder(DIM_FR, EMB_SIZE, HID_SIZE).to(DEVICE)
 decoder_fr = Decoder(DIM_EN, EMB_SIZE, HID_SIZE * 2, HID_SIZE).to(DEVICE)
 model_fr_en = Seq2Seq(encoder_fr, decoder_fr).to(DEVICE)
 model_fr_en.load_state_dict(
-    torch.load("backend/data/reporting/model/seq2seq_fr-en_v8.pth", map_location=DEVICE)
+    torch.load(f"{MODEL_DIR}/seq2seq_fr-en_v8.pth", map_location=DEVICE)
 )
 model_fr_en.eval()
 
@@ -61,7 +102,7 @@ logger.info("Modèles locaux chargés avec succès")
 # ==============================
 # Hugging Face Client
 # ==============================
-HF_TOKEN = os.getenv("HF_TOKEN")  # ⚠️ Définir via export HF_TOKEN="xxx"
+HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
     logger.warning("Aucun token Hugging Face trouvé dans les variables d'environnement")
 
@@ -72,9 +113,7 @@ client = InferenceClient("Helsinki-NLP/opus-mt-en-fr", token=HF_TOKEN)
 # ==============================
 @app.route("/translate", methods=["POST"])
 def translate():
-    """Traduit une phrase EN ↔ FR avec modèle local ou Hugging Face API."""
     data_req = request.get_json()
-
     if not data_req:
         return jsonify({"error": "Requête invalide, JSON manquant"}), 400
 
@@ -89,15 +128,11 @@ def translate():
         translation = None
         source = None  
 
-        # -----------------------------
         # EN → FR
-        # -----------------------------
         if from_lang == "en" and to_lang == "fr":
             if use_api_(sentence, en_word2id):
                 if not HF_TOKEN:
-                    return jsonify({
-                        "error": "API Hugging Face indisponible (token manquant)"
-                    }), 503
+                    return jsonify({"error": "API Hugging Face indisponible (token manquant)"}), 503
                 response = client.post(json={"inputs": sentence})
                 data_hf = json.loads(response)
                 translation = data_hf[0]["translation_text"]
@@ -108,16 +143,11 @@ def translate():
                 )
                 source = "local"
 
-        # -----------------------------
         # FR → EN
-        # -----------------------------
         elif from_lang == "fr" and to_lang == "en":
             if use_api_(sentence, fr_word2id):
                 if not HF_TOKEN:
-                    return jsonify({
-                        "error": "API Hugging Face indisponible (token manquant)"
-                    }), 503
-                # Utiliser modèle Hugging Face FR→EN
+                    return jsonify({"error": "API Hugging Face indisponible (token manquant)"}), 503
                 client_fr_en = InferenceClient("Helsinki-NLP/opus-mt-fr-en", token=HF_TOKEN)
                 response = client_fr_en.post(json={"inputs": sentence})
                 data_hf = json.loads(response)
@@ -132,15 +162,11 @@ def translate():
         else:
             return jsonify({"error": "Paires de langues non supportées"}), 400
 
-        return jsonify({
-            "translation_text": translation,
-            "model_source": source
-        })
+        return jsonify({"translation_text": translation, "model_source": source})
 
     except Exception as e:
         logger.error(f"Erreur pendant la traduction: {e}")
         return jsonify({"error": "Erreur interne serveur"}), 500
-
 
 # ==============================
 # Lancement serveur
