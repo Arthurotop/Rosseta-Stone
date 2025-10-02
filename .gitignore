@@ -1,2 +1,4 @@
 backend/data
 rosette
+!backend/data/reporting/gridsearch_res/
+!backend/data/reporting/gridsearch_res/*
