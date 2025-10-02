@@ -40,7 +40,7 @@ Pour exécuter le projet en local :
 
 1. Installer les dépendances via `requirements.txt` :  
    ```bash
-   pip install -r backend/requirements.txt
+   pip install -r requirements.txt
 
 2. Lancer le serveur Flask depuis le backend :
    python backend/src/app.py
@@ -132,5 +132,6 @@ Configurez la variable d’environnement HF_TOKEN pour utiliser l’API Hugging 
 Le modèle local est prioritaire ; l’API Hugging Face est utilisée uniquement si nécessaire.
 
 Le projet peut être exécuté en local ou via le déploiement en ligne sur Render.
+
 
 
